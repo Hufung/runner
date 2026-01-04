@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>RunTracker Pro</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    
+    <!-- Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+
+    <style>
+        body {
+            overscroll-behavior: none;
+        }
+        #map {
+            height: 100vh;
+            width: 100%;
+            z-index: 0;
+        }
+        .stats-panel {
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+        /* Pulse animation for the recording indicator */
+        @keyframes pulse-red {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+        .recording-dot {
+            animation: pulse-red 2s infinite;
+        }
+        /* Custom scrollbar for analysis log */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #1e293b; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #475569; 
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-white overflow-hidden relative font-sans">
+
+    <!-- Map Container -->
+    <div id="map"></div>
+
+    <!-- Top Bar: Status -->
+    <div class="absolute top-0 left-0 right-0 p-4 z-[1000] flex justify-between items-start pointer-events-none">
+        <div class="bg-slate-900/90 stats-panel px-4 py-2 rounded-full border border-slate-700 shadow-lg pointer-events-auto flex items-center gap-2">
+            <i class="ph-fill ph-sneaker-move text-emerald-400 text-xl"></i>
+            <span class="font-bold tracking-wide text-sm">RUN TRACKER</span>
+        </div>
+        
+        <div id="recording-status" class="hidden bg-slate-900/90 stats-panel px-3 py-1 rounded-full border border-red-900/50 shadow-lg flex items-center gap-2">
+            <div class="w-2 h-2 rounded-full bg-red-500 recording-dot"></div>
+            <span class="text-xs font-bold text-red-400 uppercase tracking-wider">REC</span>
+        </div>
+    </div>
+
+    <!-- Bottom Panel: Stats & Controls -->
+    <div class="absolute bottom-0 left-0 right-0 z-[1000] bg-slate-900/95 border-t border-slate-700 rounded-t-3xl shadow-2xl transition-transform duration-300 transform translate-y-0" id="main-panel">
+        
+        <!-- Drag Handle / Toggle -->
+        <div class="w-full flex justify-center pt-3 pb-1 cursor-pointer" onclick="togglePanel()">
+            <div class="w-12 h-1.5 bg-slate-600 rounded-full"></div>
+        </div>
+
+        <div class="p-6 pt-2 pb-8">
+            <!-- Timer Display -->
+            <div class="text-center mb-6">
+                <div class="text-5xl font-black font-mono tracking-tighter text-white" id="timer">00:00:00</div>
+                <div class="text-slate-400 text-xs uppercase tracking-widest mt-1">Duration</div>
+            </div>
+
+            <!-- Stats Grid -->
+            <div class="grid grid-cols-3 gap-4 mb-6 text-center">
+                <!-- Distance -->
+                <div class="bg-slate-800/50 p-3 rounded-2xl border border-slate-700">
+                    <div class="text-2xl font-bold text-blue-400" id="distance">0.00</div>
+                    <div class="text-[10px] text-slate-400 uppercase">Km</div>
+                </div>
+                <!-- Speed -->
+                <div class="bg-slate-800/50 p-3 rounded-2xl border border-slate-700">
+                    <div class="text-2xl font-bold text-emerald-400" id="pace">0'00"</div>
+                    <div class="text-[10px] text-slate-400 uppercase">Min/Km</div>
+                </div>
+                <!-- Elevation -->
+                <div class="bg-slate-800/50 p-3 rounded-2xl border border-slate-700">
+                    <div class="text-2xl font-bold text-amber-400" id="elevation">0</div>
+                    <div class="text-[10px] text-slate-400 uppercase">Gain (m)</div>
+                </div>
+            </div>
+
+            <!-- Analysis / Info Message -->
+            <div id="gps-status" class="text-xs text-center text-slate-500 mb-4 h-4">
+                Waiting for GPS signal...
+            </div>
+
+            <!-- Controls -->
+            <div class="flex gap-4 justify-center items-center">
+                <!-- Start Button -->
+                <button id="btn-start" onclick="startRun()" class="w-16 h-16 rounded-full bg-emerald-500 hover:bg-emerald-600 text-white flex items-center justify-center shadow-lg shadow-emerald-900/20 transition-all active:scale-95">
+                    <i class="ph-fill ph-play text-2xl"></i>
+                </button>
+                
+                <!-- Stop Button (Hidden initially) -->
+                <button id="btn-stop" onclick="stopRun()" class="hidden w-16 h-16 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center shadow-lg shadow-red-900/20 transition-all active:scale-95">
+                    <i class="ph-fill ph-pause text-2xl"></i>
+                </button>
+
+                 <!-- Finish/Save Button (Hidden initially) -->
+                 <button id="btn-finish" onclick="finishRun()" class="hidden w-16 h-16 rounded-full bg-slate-700 hover:bg-slate-600 text-white flex items-center justify-center shadow-lg transition-all active:scale-95">
+                    <i class="ph-fill ph-flag-checkered text-2xl"></i>
+                </button>
+
+                <!-- Reset Button -->
+                <button id="btn-reset" onclick="resetRun()" class="w-12 h-12 rounded-full bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white flex items-center justify-center border border-slate-700 transition-all active:scale-95">
+                    <i class="ph-bold ph-arrow-counter-clockwise text-xl"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <script>
+        // --- State Variables ---
+        let map, userMarker, pathPolyline;
+        let watchId = null;
+        let isRunning = false;
+        let startTime = 0;
+        let elapsedTime = 0;
+        let timerInterval = null;
+        
+        // Data Tracking
+        let positions = []; // Array of {lat, lng, alt, time}
+        let totalDistance = 0; // meters
+        let elevationGain = 0; // meters
+        let previousAlt = null;
+
+        // UI Elements
+        const elTimer = document.getElementById('timer');
+        const elDistance = document.getElementById('distance');
+        const elPace = document.getElementById('pace');
+        const elElevation = document.getElementById('elevation');
+        const elGpsStatus = document.getElementById('gps-status');
+        const elRecordingStatus = document.getElementById('recording-status');
+        
+        const btnStart = document.getElementById('btn-start');
+        const btnStop = document.getElementById('btn-stop');
+        const btnFinish = document.getElementById('btn-finish');
+        const btnReset = document.getElementById('btn-reset');
+
+        // --- Initialization ---
+        function initMap() {
+            // Default view (will be updated by geolocation)
+            map = L.map('map', { zoomControl: false }).setView([0, 0], 2);
+
+            // OpenStreetMap Tiles (Dark/Muted aesthetic could be achieved with filters, but standard is clearer for nav)
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap contributors'
+            }).addTo(map);
+
+            // Initialize Polyline
+            pathPolyline = L.polyline([], {
+                color: '#10b981', // Emerald 500
+                weight: 5,
+                opacity: 0.8,
+                lineJoin: 'round'
+            }).addTo(map);
+
+            // Locate user immediately for initial map center
+            map.locate({setView: true, maxZoom: 16});
+        }
+
+        // --- Geolocation Logic ---
+        function startLocationTracking() {
+            if (!navigator.geolocation) {
+                elGpsStatus.innerText = "Geolocation is not supported by your browser.";
+                return;
+            }
+
+            const options = {
+                enableHighAccuracy: true,
+                timeout: 5000,
+                maximumAge: 0
+            };
+
+            watchId = navigator.geolocation.watchPosition(
+                handlePositionUpdate, 
+                handleError, 
+                options
+            );
+            
+            elGpsStatus.innerText = "Acquiring satellite lock...";
+            elGpsStatus.classList.add("animate-pulse");
+        }
+
+        function handlePositionUpdate(position) {
+            const lat = position.coords.latitude;
+            const lng = position.coords.longitude;
+            const alt = position.coords.altitude; // might be null on some devices
+            const accuracy = position.coords.accuracy;
+
+            // Only process if accuracy is decent (e.g., < 30 meters) to avoid jumping
+            if (accuracy > 30) {
+                elGpsStatus.innerText = `Weak signal (${Math.round(accuracy)}m). Waiting...`;
+                return;
+            }
+
+            elGpsStatus.innerText = `GPS Active (Acc: ${Math.round(accuracy)}m)`;
+            elGpsStatus.classList.remove("animate-pulse");
+
+            const newLatLng = [lat, lng];
+
+            // Update Map Center & Marker
+            if (!userMarker) {
+                const icon = L.divIcon({
+                    className: 'custom-div-icon',
+                    html: `<div style="background-color: #3b82f6; width: 16px; height: 16px; border: 3px solid white; border-radius: 50%; box-shadow: 0 0 10px rgba(0,0,0,0.5);"></div>`,
+                    iconSize: [20, 20],
+                    iconAnchor: [10, 10]
+                });
+                userMarker = L.marker(newLatLng, {icon: icon}).addTo(map);
+            } else {
+                userMarker.setLatLng(newLatLng);
+            }
+            
+            map.panTo(newLatLng);
+
+            // IF RECORDING IS ACTIVE
+            if (isRunning) {
+                const timestamp = Date.now();
+                
+                // 1. Update Path
+                pathPolyline.addLatLng(newLatLng);
+                
+                // 2. Calculate Distance (if we have a previous point)
+                if (positions.length > 0) {
+                    const lastPos = positions[positions.length - 1];
+                    const dist = calculateDistance(lastPos.lat, lastPos.lng, lat, lng);
+                    
+                    // Filter tiny movements (GPS jitter)
+                    if (dist > 0.002) { // Only count if moved > 2 meters
+                        totalDistance += dist; // dist is in km
+                    }
+                }
+
+                // 3. Calculate Elevation (Simple approximation)
+                if (alt !== null) {
+                    if (previousAlt !== null) {
+                        const diff = alt - previousAlt;
+                        // Only add positive gain, filter small noise
+                        if (diff > 0.5) { 
+                            elevationGain += diff;
+                        }
+                    }
+                    previousAlt = alt;
+                }
+
+                // 4. Store Data
+                positions.push({
+                    lat: lat,
+                    lng: lng,
+                    alt: alt,
+                    time: timestamp
+                });
+
+                // 5. Update UI Stats
+                updateStats();
+            }
+        }
+
+        function handleError(error) {
+            console.error(error);
+            let msg = "GPS Error.";
+            switch(error.code) {
+                case error.PERMISSION_DENIED: msg = "Location request denied."; break;
+                case error.POSITION_UNAVAILABLE: msg = "Location information unavailable."; break;
+                case error.TIMEOUT: msg = "The request to get user location timed out."; break;
+            }
+            elGpsStatus.innerText = msg;
+            elGpsStatus.classList.add("text-red-500");
+        }
+
+        // --- Math Helpers ---
+
+        // Haversine Formula for distance between two points on a sphere
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371; // Radius of the earth in km
+            const dLat = deg2rad(lat2 - lat1);
+            const dLon = deg2rad(lon2 - lon1);
+            const a = 
+                Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * Math.sin(dLon/2) * Math.sin(dLon/2); 
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+            const d = R * c; // Distance in km
+            return d;
+        }
+
+        function deg2rad(deg) {
+            return deg * (Math.PI/180);
+        }
+
+        function formatTime(ms) {
+            const totalSeconds = Math.floor(ms / 1000);
+            const h = Math.floor(totalSeconds / 3600);
+            const m = Math.floor((totalSeconds % 3600) / 60);
+            const s = totalSeconds % 60;
+            return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+        }
+
+        // --- Core Logic ---
+
+        function updateStats() {
+            // Distance
+            elDistance.innerText = totalDistance.toFixed(2);
+            
+            // Elevation
+            elElevation.innerText = Math.round(elevationGain);
+
+            // Pace calculation (min/km)
+            // Prevent division by zero
+            if (totalDistance > 0.01) {
+                const totalMinutes = (elapsedTime / 1000) / 60;
+                const paceDecimal = totalMinutes / totalDistance;
+                const paceMin = Math.floor(paceDecimal);
+                const paceSec = Math.round((paceDecimal - paceMin) * 60);
+                elPace.innerText = `${paceMin}'${paceSec.toString().padStart(2, '0')}"`;
+            } else {
+                elPace.innerText = `0'00"`;
+            }
+        }
+
+        function startRun() {
+            if (isRunning) return;
+
+            // UI Updates
+            btnStart.classList.add('hidden');
+            btnStop.classList.remove('hidden');
+            btnFinish.classList.add('hidden');
+            btnReset.classList.add('hidden');
+            elRecordingStatus.classList.remove('hidden');
+
+            isRunning = true;
+            startTime = Date.now() - elapsedTime;
+
+            // Start Location Tracking if not already (it runs continuously for map, but now we record)
+            // Re-assert previousAlt to avoid jump from initial 0
+            if (positions.length === 0) previousAlt = null;
+
+            // Start Timer
+            timerInterval = setInterval(() => {
+                elapsedTime = Date.now() - startTime;
+                elTimer.innerText = formatTime(elapsedTime);
+            }, 1000);
+        }
+
+        function stopRun() {
+            if (!isRunning) return;
+
+            // UI Updates
+            isRunning = false;
+            clearInterval(timerInterval);
+
+            btnStart.innerText = "Resume"; // Change text logic visually if needed, but icon is Play
+            btnStart.classList.remove('hidden');
+            btnStop.classList.add('hidden');
+            btnFinish.classList.remove('hidden');
+            elRecordingStatus.classList.add('hidden');
+            
+            // Note: We don't stop the watchPosition because we still want to see where we are on the map
+            // even if we paused the workout.
+        }
+
+        function finishRun() {
+            // Summary logic could go here
+            if(confirm("Finish run and clear map?")) {
+                resetRun();
+            }
+        }
+
+        function resetRun() {
+            // Stop everything
+            isRunning = false;
+            clearInterval(timerInterval);
+            
+            // Reset Data
+            positions = [];
+            totalDistance = 0;
+            elevationGain = 0;
+            elapsedTime = 0;
+            previousAlt = null;
+
+            // Reset Map Visuals
+            pathPolyline.setLatLngs([]);
+
+            // Reset UI
+            elTimer.innerText = "00:00:00";
+            elDistance.innerText = "0.00";
+            elElevation.innerText = "0";
+            elPace.innerText = "0'00\"";
+
+            btnStart.classList.remove('hidden');
+            btnStop.classList.add('hidden');
+            btnFinish.classList.add('hidden');
+            btnReset.classList.remove('hidden'); // Ensure visible
+            elRecordingStatus.classList.add('hidden');
+        }
+        
+        // --- Boot ---
+        window.onload = function() {
+            initMap();
+            startLocationTracking(); // Start getting GPS lock immediately
+        };
+
+        // Simple simple panel toggle for mobile view
+        function togglePanel() {
+            const panel = document.getElementById('main-panel');
+            // Logic to minimize/maximize could be added here if needed
+        }
+
+    </script>
+</body>
+</html>
